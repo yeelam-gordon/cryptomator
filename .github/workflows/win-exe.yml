@@ -86,9 +86,9 @@ jobs:
             java-version: '26.0.1+8'
             java-package: 'jdk'
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Setup Java
-        uses: actions/setup-java@ad2b38190b15e4d6bdf0c97fb4fca8412226d287 # v5.3.0
+        uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5.6.0
         with:
           distribution: ${{ matrix.java-dist }}
           java-version: ${{ matrix.java-version }}
@@ -352,7 +352,7 @@ jobs:
             java-version: '26.0.1+8'
             java-package: 'jdk'
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install wix and extensions
         run: |
           dotnet tool install --global wix --version ${WIX_VERSION}
@@ -368,7 +368,7 @@ jobs:
       - name: Strip version info from msi file name
         run: mv dist/win/bundle/resources/Cryptomator*.msi dist/win/bundle/resources/Cryptomator.msi
       - name: Setup Java
-        uses: actions/setup-java@ad2b38190b15e4d6bdf0c97fb4fca8412226d287 # v5.3.0
+        uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5.6.0
         with:
           distribution: ${{ matrix.java-dist }}
           java-version: ${{ matrix.java-version }}
@@ -481,7 +481,7 @@ jobs:
           merge-multiple: true
       - name: Publish installers on GitHub Releases
         id: publish
-        uses: softprops/action-gh-release@718ea10b132b3b2eba29c1007bb80653f286566b # v3.0.1
+        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
         with:
           draft: true
           fail_on_unmatched_files: true
