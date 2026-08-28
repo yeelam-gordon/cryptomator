@@ -265,30 +265,42 @@ jobs:
           name: appimage-x64
           path: appdir/Cryptomator
           if-no-files-found: error
+          include-hidden-files: true
 
   build-appimage-arm64:
     name: Build Windows app-image (arm64)
     runs-on: windows-11-arm
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-      - name: Setup Java
+      - name: Setup JavaFX jmods
         uses: actions/setup-java@ad2b38190b15e4d6bdf0c97fb4fca8412226d287 # v5.3.0
         with:
           distribution: liberica
-          java-version: '26.0.1+10'
+          java-version: '25.0.3+11'
           java-package: jdk+fx
           check-latest: true
-          cache: maven
-      - name: Ensure JavaFX jmods are available in JAVA_HOME
+      - name: Record JavaFX jmod path
         shell: pwsh
         run: |
-          $javaFxBaseJmod = Join-Path $env:JAVA_HOME 'jmods\javafx.base.jmod'
-          if (-not (Test-Path $javaFxBaseJmod)) {
-            throw "JavaFX module not found in JDK at $javaFxBaseJmod."
-          }
-      - name: Ensure major jfx version in pom and JAVA_HOME is the same
+          "JAVAFX_JMODS_ARM64=$env:JAVA_HOME\jmods" >> $env:GITHUB_ENV
+      - name: Setup Java
+        uses: actions/setup-java@ad2b38190b15e4d6bdf0c97fb4fca8412226d287 # v5.3.0
+        with:
+          distribution: temurin
+          java-version: '26.0.1+8'
+          java-package: jdk
+          check-latest: true
+          cache: maven
+      - name: Ensure JavaFX jmods are available
+        shell: pwsh
         run: |
-          JMOD_VERSION_ARM64=$(jmod describe "${JAVA_HOME}/jmods/javafx.base.jmod" | head -1)
+          $javaFxBaseJmod = Join-Path $env:JAVAFX_JMODS_ARM64 'javafx.base.jmod'
+          if (-not (Test-Path $javaFxBaseJmod)) {
+            throw "JavaFX module not found at $javaFxBaseJmod."
+          }
+      - name: Ensure major jfx version in pom and jmods is the same
+        run: |
+          JMOD_VERSION_ARM64=$(jmod describe "${JAVAFX_JMODS_ARM64}/javafx.base.jmod" | head -1)
           JMOD_VERSION_ARM64=${JMOD_VERSION_ARM64#*@}
           JMOD_VERSION_ARM64=${JMOD_VERSION_ARM64%%.*}
           POM_JFX_VERSION=$(./mvnw help:evaluate "-Dexpression=javafx.version" -q -DforceStdout)
@@ -310,7 +322,7 @@ jobs:
       - name: Set jlink module path
         id: jep-493-check
         run: |
-          echo "jmod_paths=${JAVA_HOME}/jmods" >> "$GITHUB_OUTPUT"
+          echo "jmod_paths=${JAVA_HOME}/jmods;${JAVAFX_JMODS_ARM64}" >> "$GITHUB_OUTPUT"
       - name: Run jlink
         run: >
           ${JAVA_HOME}/bin/jlink
@@ -490,6 +502,7 @@ jobs:
           name: appimage-arm64
           path: appdir/Cryptomator
           if-no-files-found: error
+          include-hidden-files: true
 
   build-msi-x64:
     name: Build .msi installer (x64)
