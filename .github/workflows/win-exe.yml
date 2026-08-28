@@ -275,7 +275,7 @@ jobs:
         uses: actions/setup-java@ad2b38190b15e4d6bdf0c97fb4fca8412226d287 # v5.3.0
         with:
           distribution: liberica
-          java-version: '26.0.1+8'
+          java-version: '26.0.1+10'
           java-package: jdk+fx
           check-latest: true
           cache: maven
@@ -503,7 +503,7 @@ jobs:
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: appimage-x64
-          path: appdir
+          path: appdir/Cryptomator
       - name: Assert downloaded app-image exists
         shell: pwsh
         run: |
@@ -634,7 +634,7 @@ jobs:
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: appimage-arm64
-          path: appdir
+          path: appdir/Cryptomator
       - name: Assert downloaded app-image exists
         shell: pwsh
         run: |
@@ -1039,6 +1039,7 @@ jobs:
       - name: Download installers
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
+          pattern: '{msi,exe}-*'
           merge-multiple: true
       - name: Assert expected installer files exist
         run: |
