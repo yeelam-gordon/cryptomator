@@ -12,6 +12,7 @@ Param(
 	[ValidateSet('All', 'AppImage', 'Msi')][string] $BuildStage = 'All',
 	[string] $BundleUpgradeCode,
 	[string] $BundleLaunchTarget,
+	[string] $JavafxJmodsPath,
 	[bool] $clean = $false # if true, cleans up previous build artifacts
 )
 
@@ -81,9 +82,20 @@ Write-Host "`$Env:JAVA_HOME=$Env:JAVA_HOME"
 
 $copyright = "(C) $CopyrightStartYear - $((Get-Date).Year) $Vendor"
 
+$archCode = (Get-CimInstance Win32_Processor).Architecture
+$archName = switch ($archCode) {
+    9  { "x64" }
+    12 { "ARM64" }
+    default { "WMI Win32_Processor.Architecture code ($archCode)" }
+}
+
 # compile
+$mavenArguments = @("-B", "-f", "$buildDir/../../pom.xml", "clean", "package", "-DskipTests", "-Pwin")
+if ($archName -eq 'ARM64') {
+	$mavenArguments += "-Djavafx.platform=win"
+}
 Invoke-CommandWithExitCheck -Command `
-    "../../mvnw.cmd" -Arguments @("-B", "-f", "$buildDir/../../pom.xml", "clean", "package", "-DskipTests", "-Pwin")
+    "../../mvnw.cmd" -Arguments $mavenArguments
 Copy-Item "$buildDir\..\..\target\$MainJarGlob.jar" -Destination "$buildDir\..\..\target\mods"
 
 # add runtime
@@ -92,23 +104,18 @@ if ($clean -and (Test-Path -Path $runtimeImagePath)) {
 	Remove-Item -Path $runtimeImagePath -Force -Recurse
 }
 
-## download jfx jmods for X64, while they are part of the Arm64 JDK
-$archCode = (Get-CimInstance Win32_Processor).Architecture
-$archName = switch ($archCode) {
-    9  { "x64" }
-    12 { "ARM64" }
-    default { "WMI Win32_Processor.Architecture code ($archCode)" }
-}
-
 switch ($archName) {
     'ARM64' {
-		$javafxBaseJmod = Join-Path $Env:JAVA_HOME "jmods\javafx.base.jmod"
+		if ([string]::IsNullOrWhiteSpace($JavafxJmodsPath)) {
+			$JavafxJmodsPath = Join-Path $Env:JAVA_HOME 'jmods'
+		}
+		$javafxBaseJmod = Join-Path $JavafxJmodsPath "javafx.base.jmod"
 		if (!(Test-Path $javafxBaseJmod)) {
-			Write-Error "JavaFX module not found in JDK. Please ensure a JDK with JavaFX (including jmods) is installed."
+			Write-Error "JavaFX module not found at $javafxBaseJmod. Pass -JavafxJmodsPath with JavaFX 25 Arm64 jmods."
 			exit 1
 		}
 
-        $jmodPaths = "$Env:JAVA_HOME/jmods"
+        $jmodPaths = "$Env:JAVA_HOME/jmods;$JavafxJmodsPath"
     }
     'x64' {
 		$javaFxVersion='25.0.3'
