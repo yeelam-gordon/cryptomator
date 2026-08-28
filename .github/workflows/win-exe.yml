@@ -335,6 +335,10 @@ jobs:
           --no-man-pages
           --strip-debug
           --compress zip-0
+      - name: Remove unused x64 JavaFX VC runtime
+        shell: pwsh
+        run: |
+          Remove-Item '.\runtime\bin\vcruntime140_1.dll' -Force -ErrorAction Stop
       - name: Run jpackage
         run: >
           ${JAVA_HOME}/bin/jpackage

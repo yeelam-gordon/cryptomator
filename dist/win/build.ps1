@@ -176,6 +176,11 @@ Invoke-CommandWithExitCheck -Command `
     "--compress", "zip-0" #do not compress and use msi compression
     )
 
+if ($archName -eq 'ARM64') {
+	# Liberica's JavaFX 25 Arm jmods contain this unused x64 DLL; no Arm binary imports it.
+	Remove-Item '.\runtime\bin\vcruntime140_1.dll' -Force -ErrorAction Stop
+}
+
 $appPath = ".\$AppName"
 if ($clean -and (Test-Path -Path $appPath)) {
 	Remove-Item -Path $appPath -Force -Recurse
