@@ -314,7 +314,7 @@ jobs:
       - name: Set version
         run: ./mvnw versions:set -DnewVersion="${VERSION_NUM}${VERSION_SUFFIX}"
       - name: Run maven
-        run: ./mvnw -B clean package -Pwin -DskipTests
+        run: ./mvnw -B clean package -Pwin -DskipTests -Djavafx.platform=win
       - name: Patch target dir
         run: |
           cp LICENSE.txt target
