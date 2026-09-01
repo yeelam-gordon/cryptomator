@@ -20,8 +20,10 @@
 	The app is isolated through _JAVA_OPTIONS, so the packaged Cryptomator.cfg does not
 	have to be modified and the developer profile is never touched.
 
-	The harness drives the UI with Win32 SendInput only. It never attaches a UI
-	Automation client, because a single UIA tree query is a reproducible fatal-crash
+	The launch/unlock smoke path drives the UI with Win32 SendInput. PostMessage remains
+	available for focus-free experiments, but Auto deliberately fails fast on a locked
+	session because PostMessage does not reliably drive the JavaFX unlock dialog. The
+	harness never attaches a UI Automation client, because a single UIA tree query is a reproducible fatal-crash
 	trigger for JavaFX 25.0.3 windows on Windows 11 ARM64 (build 26571): the Glass
 	accessibility bridge answers WM_GETOBJECT with an outgoing COM call, Windows
 	rejects it with RPC_E_CANTCALLOUT_ININPUTSYNCCALL (0x8001010d) as a non-continuable
@@ -54,8 +56,8 @@ Param(
 	[int] $GracefulCloseSec = 10,
 	[int] $RunTimeoutSec = 300,
 
-	# SendInput needs an unlocked interactive desktop; PostMessage works on a locked desktop.
-	# Auto picks SendInput when the input desktop is reachable and PostMessage otherwise.
+	# SendInput needs an unlocked interactive desktop. PostMessage can reach locked-session
+	# windows but does not reliably drive the JavaFX unlock dialog, so Auto fails fast if locked.
 	[ValidateSet('Auto', 'SendInput', 'PostMessage')][string] $InputTransport = 'Auto'
 )
 
@@ -534,7 +536,7 @@ $script:ActiveTransport = switch ($InputTransport) {
 	'PostMessage' { 'PostMessage' }
 	default { 'SendInput' }
 }
-if ($script:ActiveTransport -eq 'SendInput' -and -not $inputDesktopAvailable) {
+if ($Mode -eq 'Launch' -and $script:ActiveTransport -eq 'SendInput' -and -not $inputDesktopAvailable) {
 	# Auto does not silently fall back: PostMessage reaches the window but was measured not to
 	# drive the JavaFX unlock dialog while the session is locked, so a fallback would only
 	# produce a misleading "unlock timed out" failure.
@@ -900,5 +902,4 @@ if ($failed.Count -gt 0) {
 	exit 1
 }
 exit 0
-
 

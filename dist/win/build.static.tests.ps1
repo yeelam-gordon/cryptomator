@@ -86,3 +86,21 @@ if (-not (Select-String -Path $gitignore -Pattern '^generated$' -Quiet)) {
 }
 
 Write-Host 'PASS: build.ps1 generates FAvaultFile.properties into an ignored build-output directory and leaves the tracked resource untouched.'
+
+$runtimeSmokeScript = Join-Path $PSScriptRoot 'runtime-smoke.ps1'
+$runtimeTokens = $null
+$runtimeErrors = $null
+[System.Management.Automation.Language.Parser]::ParseFile($runtimeSmokeScript, [ref]$runtimeTokens, [ref]$runtimeErrors) | Out-Null
+if ($runtimeErrors.Count -ne 0) {
+	throw "PowerShell parse errors in runtime-smoke.ps1: $($runtimeErrors.Count)"
+}
+
+$runtimeSmokeText = Get-Content $runtimeSmokeScript -Raw
+if ($runtimeSmokeText -notmatch [regex]::Escape("if (`$Mode -eq 'Launch' -and `$script:ActiveTransport -eq 'SendInput' -and -not `$inputDesktopAvailable)")) {
+	throw 'Locked-session SendInput validation must apply only to Launch mode, not AccessibilityProbe.'
+}
+if ($runtimeSmokeText -match 'Auto picks SendInput when the input desktop is reachable and PostMessage otherwise') {
+	throw 'runtime-smoke.ps1 documentation must not promise an automatic PostMessage fallback.'
+}
+
+Write-Host 'PASS: runtime-smoke.ps1 keeps Auto fail-fast semantics and permits locked-session AccessibilityProbe runs.'
