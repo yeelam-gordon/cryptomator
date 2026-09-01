@@ -17,10 +17,29 @@ Param(
 )
 
 $ErrorActionPreference = 'Stop'
+$BuildRoot = Split-Path -Parent $PSCommandPath
+$InvocationRoot = (Get-Location).Path
 
 # ============================
 # Function Definitions Section
 # ============================
+
+function Resolve-AbsolutePathFromInvocationRoot {
+	param (
+		[string]$Path,
+		[string]$BasePath
+	)
+
+	if ([string]::IsNullOrWhiteSpace($Path)) {
+		return $Path
+	}
+
+	if ([System.IO.Path]::IsPathRooted($Path)) {
+		return [System.IO.Path]::GetFullPath($Path)
+	}
+
+	return [System.IO.Path]::GetFullPath((Join-Path $BasePath $Path))
+}
 
 function Invoke-CommandWithExitCheck {
 	param (
@@ -296,9 +315,15 @@ $Env:JP_WIXWIZARD_RESOURCES = "$buildDir\resources\"
 $Env:JP_WIXWIZARD_RESOURCES_PROPERTIES_FORMAT = "${Env:JP_WIXWIZARD_RESOURCES}".Replace('\', '\\');
 $Env:JP_WIXHELPER_DIR = "$((Get-Location).Path)\"
 
+# The file-association descriptor embeds an absolute icon path, so it is generated into a
+# build-output directory instead of overwriting the tracked resource. That keeps the working
+# tree free of machine-specific paths and makes the build independent of the checkout location.
+$generatedDir = ".\generated"
+New-Item -ItemType Directory -Force -Path $generatedDir | Out-Null
+$faVaultFileProperties = Join-Path $generatedDir "FAvaultFile.properties"
 Get-Content .\resources\FAvaultFile.template.properties ` # Similar to envsubst
     | ForEach-Object { $ExecutionContext.InvokeCommand.ExpandString($_) } `
-    | Out-File -FilePath .\resources\FAvaultFile.properties
+    | Out-File -FilePath $faVaultFileProperties
 
 Invoke-CommandWithExitCheck -Command `
     "$Env:JAVA_HOME\bin\jpackage" -Arguments @(
@@ -319,7 +344,7 @@ Invoke-CommandWithExitCheck -Command `
     "--license-file", "resources/license.rtf",
     "--win-update-url", $UpdateUrl,
     "--about-url", $AboutUrl,
-    "--file-associations", "resources/FAvaultFile.properties"
+    "--file-associations", $faVaultFileProperties
     )
 Remove-Item -Path $msiHelperBuildDir, $msiHelperOutputDir, ".\msica.dll" -Force -Recurse -ErrorAction Ignore
 
@@ -392,11 +417,24 @@ return 0;
 # ============================
 # Script Execution Starts Here
 # ============================
-if ($clean) {
-	Write-Host "Cleaning up previous build artifacts..."
-	Remove-Item -Path ".\runtime" -Force -Recurse -ErrorAction Ignore -ProgressAction SilentlyContinue
-	Remove-Item -Path ".\$AppName" -Force -Recurse -ErrorAction Ignore -ProgressAction SilentlyContinue
-	Remove-Item -Path ".\installer" -Force -Recurse -ErrorAction Ignore -ProgressAction SilentlyContinue
+if ($PSBoundParameters.ContainsKey('JavafxJmodsPath')) {
+	$JavafxJmodsPath = Resolve-AbsolutePathFromInvocationRoot -Path $JavafxJmodsPath -BasePath $InvocationRoot
 }
-Main
+$enteredBuildRoot = $false
+try {
+	Push-Location $BuildRoot
+	$enteredBuildRoot = $true
+	if ($clean) {
+		Write-Host "Cleaning up previous build artifacts..."
+		Remove-Item -Path ".\runtime" -Force -Recurse -ErrorAction Ignore -ProgressAction SilentlyContinue
+		Remove-Item -Path ".\$AppName" -Force -Recurse -ErrorAction Ignore -ProgressAction SilentlyContinue
+		Remove-Item -Path ".\installer" -Force -Recurse -ErrorAction Ignore -ProgressAction SilentlyContinue
+	}
+	Main
+}
+finally {
+	if ($enteredBuildRoot) {
+		Pop-Location
+	}
+}
 exit 0
