@@ -17,6 +17,16 @@ Param(
 )
 
 $ErrorActionPreference = 'Stop'
+
+# build.bat already invokes this script with 'pwsh' (PowerShell 7+), never Windows
+# PowerShell 5.1 ('powershell.exe'). Enforce that contract explicitly: some syntax below
+# (e.g. -ProgressAction) only binds on PowerShell 7.4+, and Windows PowerShell 5.1 fails
+# confusingly deep inside the build instead of with an actionable message.
+if ($PSVersionTable.PSEdition -ne 'Core' -or $PSVersionTable.PSVersion.Major -lt 7) {
+	Write-Error "build.ps1 requires PowerShell 7+ (pwsh), the same host build.bat already invokes ('pwsh -NoLogo -NoProfile -ExecutionPolicy Unrestricted -Command .\build.ps1'). Detected $($PSVersionTable.PSEdition) PowerShell $($PSVersionTable.PSVersion). Install PowerShell 7 (https://aka.ms/powershell) and re-run with 'pwsh -File .\build.ps1 ...', or via build.bat."
+	exit 1
+}
+
 $BuildRoot = Split-Path -Parent $PSCommandPath
 $InvocationRoot = (Get-Location).Path
 
@@ -34,8 +44,18 @@ function Resolve-AbsolutePathFromInvocationRoot {
 		return $Path
 	}
 
-	if ([System.IO.Path]::IsPathRooted($Path)) {
+	if ([System.IO.Path]::IsPathFullyQualified($Path)) {
 		return [System.IO.Path]::GetFullPath($Path)
+	}
+
+	if ([System.IO.Path]::IsPathRooted($Path)) {
+		# Drive-relative forms such as 'C:jmods' (relative to that drive's own current
+		# directory) or '\jfx\jmods' (relative to whatever the current drive happens to be)
+		# are "rooted" but not fully qualified. .NET resolves them against the process's
+		# per-drive Environment.CurrentDirectory, which has nothing to do with -BasePath /
+		# $InvocationRoot and can silently pick up a stale or unexpected directory. Reject
+		# them instead of guessing what the caller meant.
+		throw "Path '$Path' is drive-relative and ambiguous: it would resolve against the process's current directory on that drive, not against the invocation directory. Pass a fully qualified path (e.g. 'C:\jmods') or a path relative to the invocation directory (e.g. '.\jmods')."
 	}
 
 	return [System.IO.Path]::GetFullPath((Join-Path $BasePath $Path))
@@ -321,7 +341,9 @@ $Env:JP_WIXHELPER_DIR = "$((Get-Location).Path)\"
 $generatedDir = ".\generated"
 New-Item -ItemType Directory -Force -Path $generatedDir | Out-Null
 $faVaultFileProperties = Join-Path $generatedDir "FAvaultFile.properties"
-Get-Content .\resources\FAvaultFile.template.properties ` # Similar to envsubst
+# Similar to envsubst. NOTE: a trailing backtick followed by a comment is not a valid line
+# continuation in Windows PowerShell 5.1 (only in pwsh); keep the comment on its own line.
+Get-Content .\resources\FAvaultFile.template.properties `
     | ForEach-Object { $ExecutionContext.InvokeCommand.ExpandString($_) } `
     | Out-File -FilePath $faVaultFileProperties
 

@@ -561,9 +561,10 @@ jobs:
         working-directory: dist/win
         run: |
           $Env:JP_WIXWIZARD_RESOURCES_PROPERTIES_FORMAT = "${Env:JP_WIXWIZARD_RESOURCES}".Replace('\', '\\');
+          New-Item -ItemType Directory -Force -Path .\generated | Out-Null
           Get-Content .\resources\FAvaultFile.template.properties `
             | ForEach-Object { $ExecutionContext.InvokeCommand.ExpandString($_) } `
-            | Out-File -FilePath .\resources\FAvaultFile.properties
+            | Out-File -FilePath .\generated\FAvaultFile.properties
         env:
           JP_WIXWIZARD_RESOURCES: ${{ github.workspace }}/dist/win/resources/
         shell: pwsh
@@ -600,7 +601,7 @@ jobs:
           --win-menu-group Cryptomator
           --resource-dir dist/win/resources
           --license-file dist/win/resources/license.rtf
-          --file-associations dist/win/resources/FAvaultFile.properties
+          --file-associations dist/win/generated/FAvaultFile.properties
         env:
           JP_WIXWIZARD_RESOURCES: ${{ github.workspace }}/dist/win/resources/
           JP_WIXHELPER_DIR: ${{ github.workspace }}\appdir\
@@ -693,9 +694,10 @@ jobs:
         working-directory: dist/win
         run: |
           $Env:JP_WIXWIZARD_RESOURCES_PROPERTIES_FORMAT = "${Env:JP_WIXWIZARD_RESOURCES}".Replace('\', '\\');
+          New-Item -ItemType Directory -Force -Path .\generated | Out-Null
           Get-Content .\resources\FAvaultFile.template.properties `
             | ForEach-Object { $ExecutionContext.InvokeCommand.ExpandString($_) } `
-            | Out-File -FilePath .\resources\FAvaultFile.properties
+            | Out-File -FilePath .\generated\FAvaultFile.properties
         env:
           JP_WIXWIZARD_RESOURCES: ${{ github.workspace }}/dist/win/resources/
         shell: pwsh
@@ -732,7 +734,7 @@ jobs:
           --win-menu-group Cryptomator
           --resource-dir dist/win/resources
           --license-file dist/win/resources/license.rtf
-          --file-associations dist/win/resources/FAvaultFile.properties
+          --file-associations dist/win/generated/FAvaultFile.properties
         env:
           JP_WIXWIZARD_RESOURCES: ${{ github.workspace }}/dist/win/resources/
           JP_WIXHELPER_DIR: ${{ github.workspace }}\appdir\
