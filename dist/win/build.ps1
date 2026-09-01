@@ -9,18 +9,67 @@ Param(
 	[Parameter(Mandatory, HelpMessage="Please provide an update url")][string] $UpdateUrl,
 	[Parameter(Mandatory, HelpMessage="Please provide an about url")][string] $AboutUrl,
 	[Parameter(Mandatory, HelpMessage="Please provide an alias for localhost")][string] $LoopbackAlias,
+	[ValidateSet('All', 'AppImage', 'Msi')][string] $BuildStage = 'All',
+	[string] $BundleUpgradeCode,
+	[string] $BundleLaunchTarget,
+	[string] $JavafxJmodsPath,
 	[bool] $clean = $false # if true, cleans up previous build artifacts
 )
+
+$ErrorActionPreference = 'Stop'
+
+# build.bat already invokes this script with 'pwsh' (PowerShell 7+), never Windows
+# PowerShell 5.1 ('powershell.exe'). Enforce that contract explicitly: some syntax below
+# (e.g. -ProgressAction) only binds on PowerShell 7.4+, and Windows PowerShell 5.1 fails
+# confusingly deep inside the build instead of with an actionable message.
+if ($PSVersionTable.PSEdition -ne 'Core' -or $PSVersionTable.PSVersion.Major -lt 7) {
+	Write-Error "build.ps1 requires PowerShell 7+ (pwsh), the same host build.bat already invokes ('pwsh -NoLogo -NoProfile -ExecutionPolicy Unrestricted -Command .\build.ps1'). Detected $($PSVersionTable.PSEdition) PowerShell $($PSVersionTable.PSVersion). Install PowerShell 7 (https://aka.ms/powershell) and re-run with 'pwsh -File .\build.ps1 ...', or via build.bat."
+	exit 1
+}
+
+$BuildRoot = Split-Path -Parent $PSCommandPath
+$InvocationRoot = (Get-Location).Path
 
 # ============================
 # Function Definitions Section
 # ============================
+
+function Resolve-AbsolutePathFromInvocationRoot {
+	param (
+		[string]$Path,
+		[string]$BasePath
+	)
+
+	if ([string]::IsNullOrWhiteSpace($Path)) {
+		return $Path
+	}
+
+	if ([System.IO.Path]::IsPathFullyQualified($Path)) {
+		return [System.IO.Path]::GetFullPath($Path)
+	}
+
+	if ([System.IO.Path]::IsPathRooted($Path)) {
+		# Drive-relative forms such as 'C:jmods' (relative to that drive's own current
+		# directory) or '\jfx\jmods' (relative to whatever the current drive happens to be)
+		# are "rooted" but not fully qualified. .NET resolves them against the process's
+		# per-drive Environment.CurrentDirectory, which has nothing to do with -BasePath /
+		# $InvocationRoot and can silently pick up a stale or unexpected directory. Reject
+		# them instead of guessing what the caller meant.
+		throw "Path '$Path' is drive-relative and ambiguous: it would resolve against the process's current directory on that drive, not against the invocation directory. Pass a fully qualified path (e.g. 'C:\jmods') or a path relative to the invocation directory (e.g. '.\jmods')."
+	}
+
+	return [System.IO.Path]::GetFullPath((Join-Path $BasePath $Path))
+}
 
 function Invoke-CommandWithExitCheck {
 	param (
 		[string]$Command,
 		[string[]]$Arguments
 	)
+
+	if ((Get-Command $Command -ErrorAction SilentlyContinue) -eq $null) {
+		throw "Unable to find required command '$Command'."
+	}
 
 	& $Command @Arguments
 	if ($LASTEXITCODE -ne 0) {
@@ -72,9 +121,20 @@ Write-Host "`$Env:JAVA_HOME=$Env:JAVA_HOME"
 
 $copyright = "(C) $CopyrightStartYear - $((Get-Date).Year) $Vendor"
 
+$archCode = (Get-CimInstance Win32_Processor).Architecture
+$archName = switch ($archCode) {
+    9  { "x64" }
+    12 { "ARM64" }
+    default { "WMI Win32_Processor.Architecture code ($archCode)" }
+}
+
 # compile
+$mavenArguments = @("-B", "-f", "$buildDir/../../pom.xml", "clean", "package", "-DskipTests", "-Pwin")
+if ($archName -eq 'ARM64') {
+	$mavenArguments += "-Djavafx.platform=win"
+}
 Invoke-CommandWithExitCheck -Command `
-    "../../mvnw.cmd" -Arguments @("-B", "-f", "$buildDir/../../pom.xml", "clean", "package", "-DskipTests", "-Pwin")
+    "../../mvnw.cmd" -Arguments $mavenArguments
 Copy-Item "$buildDir\..\..\target\$MainJarGlob.jar" -Destination "$buildDir\..\..\target\mods"
 
 # add runtime
@@ -83,23 +143,18 @@ if ($clean -and (Test-Path -Path $runtimeImagePath)) {
 	Remove-Item -Path $runtimeImagePath -Force -Recurse
 }
 
-## download jfx jmods for X64, while they are part of the Arm64 JDK
-$archCode = (Get-CimInstance Win32_Processor).Architecture
-$archName = switch ($archCode) {
-    9  { "x64" }
-    12 { "ARM64" }
-    default { "WMI Win32_Processor.Architecture code ($archCode)" }
-}
-
 switch ($archName) {
     'ARM64' {
-		$javafxBaseJmod = Join-Path $Env:JAVA_HOME "jmods\javafx.base.jmod"
+		if ([string]::IsNullOrWhiteSpace($JavafxJmodsPath)) {
+			$JavafxJmodsPath = Join-Path $Env:JAVA_HOME 'jmods'
+		}
+		$javafxBaseJmod = Join-Path $JavafxJmodsPath "javafx.base.jmod"
 		if (!(Test-Path $javafxBaseJmod)) {
-			Write-Error "JavaFX module not found in JDK. Please ensure a JDK with JavaFX (including jmods) is installed."
+			Write-Error "JavaFX module not found at $javafxBaseJmod. Pass -JavafxJmodsPath with JavaFX 25 Arm64 jmods."
 			exit 1
 		}
 
-        $jmodPaths = "$Env:JAVA_HOME/jmods"
+        $jmodPaths = "$Env:JAVA_HOME/jmods;$JavafxJmodsPath"
     }
     'x64' {
 		$javaFxVersion='25.0.3'
@@ -126,9 +181,25 @@ switch ($archName) {
 		$jmodPaths="$buildDir/resources/javafx-jmods";
     }
     default {
-        Write-Error "Unsupported architecture: $arch"
+        Write-Error "Unsupported architecture: $archName"
         exit 1
     }
+}
+
+if ([string]::IsNullOrWhiteSpace($BundleUpgradeCode)) {
+	$BundleUpgradeCode = switch ($archName) {
+		'ARM64' { '070b3234-eaf9-4294-ba31-78a0e2f0a6be' }
+		default { '29eea626-2e5b-4449-b5f8-4602925ddf7b' }
+	}
+}
+$parsedBundleUpgradeCode = [guid]::Empty
+if (-not [guid]::TryParse($BundleUpgradeCode, [ref] $parsedBundleUpgradeCode) -or $parsedBundleUpgradeCode -eq [guid]::Empty) {
+	Write-Error "BundleUpgradeCode must be a non-empty GUID. Received: '$BundleUpgradeCode'"
+	exit 1
+}
+$BundleUpgradeCode = $parsedBundleUpgradeCode.ToString()
+if (-not $PSBoundParameters.ContainsKey('BundleLaunchTarget') -and $archName -eq 'x64') {
+	$BundleLaunchTarget = "[ProgramFiles64Folder]\$AppName\$AppName.exe"
 }
 
 ## create custom runtime
@@ -150,6 +221,11 @@ Invoke-CommandWithExitCheck -Command `
     "--strip-debug",
     "--compress", "zip-0" #do not compress and use msi compression
     )
+
+if ($archName -eq 'ARM64') {
+	# Liberica's JavaFX 25 Arm jmods contain this unused x64 DLL; no Arm binary imports it.
+	Remove-Item '.\runtime\bin\vcruntime140_1.dll' -Force -ErrorAction Stop
+}
 
 $appPath = ".\$AppName"
 if ($clean -and (Test-Path -Path $appPath)) {
@@ -202,7 +278,7 @@ $javaOptions = @(
 
 if ($LASTEXITCODE -ne 0) {
     Write-Error "jpackage Appimage failed with exit code $LASTEXITCODE"
-	return 1;
+	exit $LASTEXITCODE
 }
 
 #Create RTF license for msi
@@ -217,18 +293,59 @@ Invoke-CommandWithExitCheck -Command `
     "-Dlicense.licenseMergesUrl=file:///$buildDir/../../license/merges")
 
 # patch app dir
-Copy-Item "contrib\*" -Destination "$AppName"
+if ($archName -eq 'ARM64') {
+	# The checked-in JNA dispatcher is x64-only and must not enter the Arm64 payload.
+	Get-ChildItem "contrib\*" -File |
+		Where-Object Name -ne 'jnidispatch.dll' |
+		Copy-Item -Destination "$AppName"
+} else {
+	Copy-Item "contrib\*" -Destination "$AppName"
+}
 attrib -r "$AppName\$AppName.exe"
 attrib -r "$AppName\${AppName} (Debug).exe"
 
+if ($BuildStage -eq 'AppImage') {
+	Write-Host "BuildStage AppImage requested; skipping MSI and EXE bundle creation."
+	return 0
+}
+
 # create .msi
+$msiHelperBuildDir = ".\msi-helper-build"
+$msiHelperOutputDir = ".\msi-helper-output"
+Remove-Item -Path $msiHelperBuildDir, $msiHelperOutputDir, ".\msica.dll" -Force -Recurse -ErrorAction Ignore
+Invoke-CommandWithExitCheck -Command `
+    "$Env:JAVA_HOME\bin\jpackage" -Arguments @(
+    "--type", "msi",
+    "--win-upgrade-uuid", $UpgradeUUID,
+    "--app-image", $AppName,
+    "--dest", $msiHelperOutputDir,
+    "--name", "CryptomatorHelper",
+    "--vendor", $Vendor,
+    "--copyright", $copyright,
+    "--app-version", "1.0",
+    "--temp", $msiHelperBuildDir
+    )
+$msiHelperDll = Get-ChildItem -Path $msiHelperBuildDir -Recurse -Filter "msica.dll" | Select-Object -First 1
+if (-not $msiHelperDll) {
+	Write-Error "Unable to find msica.dll in $msiHelperBuildDir"
+	exit 1
+}
+Copy-Item -Path $msiHelperDll.FullName -Destination ".\msica.dll" -Force
 $Env:JP_WIXWIZARD_RESOURCES = "$buildDir\resources\"
 $Env:JP_WIXWIZARD_RESOURCES_PROPERTIES_FORMAT = "${Env:JP_WIXWIZARD_RESOURCES}".Replace('\', '\\');
-$Env:JP_WIXHELPER_DIR = ""
+$Env:JP_WIXHELPER_DIR = "$((Get-Location).Path)\"
 
-Get-Content .\resources\FAvaultFile.template.properties ` # Similar to envsubst
+# The file-association descriptor embeds an absolute icon path, so it is generated into a
+# build-output directory instead of overwriting the tracked resource. That keeps the working
+# tree free of machine-specific paths and makes the build independent of the checkout location.
+$generatedDir = ".\generated"
+New-Item -ItemType Directory -Force -Path $generatedDir | Out-Null
+$faVaultFileProperties = Join-Path $generatedDir "FAvaultFile.properties"
+# Similar to envsubst. NOTE: a trailing backtick followed by a comment is not a valid line
+# continuation in Windows PowerShell 5.1 (only in pwsh); keep the comment on its own line.
+Get-Content .\resources\FAvaultFile.template.properties `
     | ForEach-Object { $ExecutionContext.InvokeCommand.ExpandString($_) } `
-    | Out-File -FilePath .\resources\FAvaultFile.properties
+    | Out-File -FilePath $faVaultFileProperties
 
 Invoke-CommandWithExitCheck -Command `
     "$Env:JAVA_HOME\bin\jpackage" -Arguments @(
@@ -249,8 +366,14 @@ Invoke-CommandWithExitCheck -Command `
     "--license-file", "resources/license.rtf",
     "--win-update-url", $UpdateUrl,
     "--about-url", $AboutUrl,
-    "--file-associations", "resources/FAvaultFile.properties"
+    "--file-associations", $faVaultFileProperties
     )
+Remove-Item -Path $msiHelperBuildDir, $msiHelperOutputDir, ".\msica.dll" -Force -Recurse -ErrorAction Ignore
+
+if ($BuildStage -eq 'Msi') {
+	Write-Host "BuildStage Msi requested; skipping EXE bundle creation."
+	return 0
+}
 
 #Create RTF license for bundle
 Invoke-CommandWithExitCheck -Command `
@@ -287,21 +410,27 @@ Invoke-WebRequest $winfspUninstaller -OutFile ".\bundle\resources\winfsp-uninsta
 Copy-Item ".\installer\$AppName-*.msi" -Destination ".\bundle\resources\$AppName.msi" -Force
 
 # create bundle including winfsp
-Invoke-CommandWithExitCheck -Command `
-    "wix" -Arguments @(
-    "build",
-    "-define", "BundleName=$AppName",
-    "-define", "BundleVersion=$semVerNo.$revisionNo",
-    "-define", "BundleVendor=$Vendor",
-    "-define", "BundleCopyright=$copyright",
-    "-define", "AboutUrl=$AboutUrl",
-    "-define", "HelpUrl=$HelpUrl",
-    "-define", "UpdateUrl=$UpdateUrl",
-    "-ext", "WixToolset.Util.wixext",
-    "-ext", "WixToolset.BootstrapperApplications.wixext",
-    ".\bundle\bundleWithWinfsp.wxs",
-    "-out", ".\installer\$AppName-Installer.exe"
+$bundleWixArgs = @(
+	"build",
+	"-define", "BundleName=$AppName",
+	"-define", "BundleVersion=$semVerNo.$revisionNo",
+	"-define", "BundleVendor=$Vendor",
+	"-define", "BundleCopyright=$copyright",
+	"-define", "AboutUrl=$AboutUrl",
+	"-define", "HelpUrl=$HelpUrl",
+	"-define", "UpdateUrl=$UpdateUrl",
+	"-define", "BundleUpgradeCode=$BundleUpgradeCode"
 )
+if ($BundleLaunchTarget) {
+	$bundleWixArgs += @("-define", "BundleLaunchTarget=$BundleLaunchTarget")
+}
+$bundleWixArgs += @(
+	"-ext", "WixToolset.Util.wixext",
+	"-ext", "WixToolset.BootstrapperApplications.wixext",
+	".\bundle\bundleWithWinfsp.wxs",
+	"-out", ".\installer\$AppName-Installer.exe"
+)
+Invoke-CommandWithExitCheck -Command "wix" -Arguments $bundleWixArgs
 
 Write-Host "Created EXE installer .\installer\$AppName-Installer.exe"
 return 0;
@@ -310,11 +439,24 @@ return 0;
 # ============================
 # Script Execution Starts Here
 # ============================
-if ($clean) {
-	Write-Host "Cleaning up previous build artifacts..."
-	Remove-Item -Path ".\runtime" -Force -Recurse -ErrorAction Ignore -ProgressAction SilentlyContinue
-	Remove-Item -Path ".\$AppName" -Force -Recurse -ErrorAction Ignore -ProgressAction SilentlyContinue
-	Remove-Item -Path ".\installer" -Force -Recurse -ErrorAction Ignore -ProgressAction SilentlyContinue
+if ($PSBoundParameters.ContainsKey('JavafxJmodsPath')) {
+	$JavafxJmodsPath = Resolve-AbsolutePathFromInvocationRoot -Path $JavafxJmodsPath -BasePath $InvocationRoot
 }
-return Main
-
+$enteredBuildRoot = $false
+try {
+	Push-Location $BuildRoot
+	$enteredBuildRoot = $true
+	if ($clean) {
+		Write-Host "Cleaning up previous build artifacts..."
+		Remove-Item -Path ".\runtime" -Force -Recurse -ErrorAction Ignore -ProgressAction SilentlyContinue
+		Remove-Item -Path ".\$AppName" -Force -Recurse -ErrorAction Ignore -ProgressAction SilentlyContinue
+		Remove-Item -Path ".\installer" -Force -Recurse -ErrorAction Ignore -ProgressAction SilentlyContinue
+	}
+	Main
+}
+finally {
+	if ($enteredBuildRoot) {
+		Pop-Location
+	}
+}
+exit 0
